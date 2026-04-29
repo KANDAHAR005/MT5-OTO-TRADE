@@ -1,0 +1,321 @@
+//+------------------------------------------------------------------+
+//|                                   TevratEA_Fraktal_Ters.mq5     |
+//|                                                     Tevrat Altin |
+//|  Fraktal: En son fraktalın TERSİ yönünde işlem açar             |
+//|  Üst Fraktal (yukarı ok) → SELL, Alt Fraktal (aşağı ok) → BUY  |
+//|  EA çalıştığı andan itibaren oluşan fraktalları okur            |
+//+------------------------------------------------------------------+
+#property copyright "Tevrat"
+#property version   "1.0"
+#property strict
+
+//--- Girdi Parametreleri ---------------------------------------------------+
+input group "=== SEMBOL & ZAMAN ==="
+input string           InpSymbol = "GOLDm#";
+input ENUM_TIMEFRAMES InpTF     = PERIOD_M1;
+
+input group "=== İŞLEM AYARLARI ==="
+input double   InpLot          = 0.1;
+input int      InpMagic        = 20261;
+input int      InpMaxIslem     = 1;     // Aynı anda maks işlem
+
+input group "=== TRAILING STOP (sadece kârdaki işleme) ==="
+input double   InpTrailStart   = 0.06;  // 0 = kâra geçer geçmez takip
+input double   InpTrailStop    = 0.03;  // Zirveden düşüş mesafesi ($)
+
+//--- Global -----------------------------------------------------------------+
+int      hFractals;
+datetime eaBaslangicZamani;  // EA'nın çalışmaya başladığı an
+datetime sonFraktalZamani;   // En son işlenen fraktalın zamanı
+
+//--- Pozisyon takip verileri ------------------------------------------------+
+#define MAX_POS 10
+ulong  posTicket[MAX_POS];
+double posZirve[MAX_POS];
+bool   posBaraj[MAX_POS];
+
+//+------------------------------------------------------------------+
+//| OnInit                                                            |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   if(!SymbolSelect(InpSymbol,true))
+   { Alert("Sembol bulunamadi: ",InpSymbol); return INIT_FAILED; }
+
+   // Fraktal indikatörünü yükle
+   hFractals = iFractals(InpSymbol,InpTF);
+   if(hFractals==INVALID_HANDLE)
+   { Alert("Fractals indikatörü yüklenemedi!"); return INIT_FAILED; }
+
+   // EA'nın başlangıç zamanını kaydet
+   eaBaslangicZamani = TimeCurrent();
+   sonFraktalZamani  = 0;
+
+   ArrayInitialize(posTicket,0);
+   ArrayInitialize(posZirve,0);
+   ArrayInitialize(posBaraj,false);
+
+   Print("╔══════════════════════════════════╗");
+   Print("║  TEVRAT Fraktal Ters EA v1.0    ║");
+   Print("║  Üst Fraktal → SELL             ║");
+   Print("║  Alt Fraktal → BUY              ║");
+   Print("╠══════════════════════════════════╣");
+   Print("║ Sembol: ",InpSymbol);
+   Print("║ Trail Start: ",InpTrailStart,"$ Stop: ",InpTrailStop,"$");
+   Print("║ EA Başlangıç: ",TimeToString(eaBaslangicZamani));
+   Print("╚══════════════════════════════════╝");
+   return INIT_SUCCEEDED;
+}
+
+void OnDeinit(const int r){ if(hFractals!=INVALID_HANDLE) IndicatorRelease(hFractals); }
+
+//+------------------------------------------------------------------+
+//| Pozisyon index bul                                                |
+//+------------------------------------------------------------------+
+int PosIndexBul(ulong ticket)
+{
+   for(int i=0;i<MAX_POS;i++)
+      if(posTicket[i]==ticket) return i;
+   return -1;
+}
+
+int BosIndexBul()
+{
+   for(int i=0;i<MAX_POS;i++)
+      if(posTicket[i]==0) return i;
+   return -1;
+}
+
+void PosEkle(ulong ticket)
+{
+   int idx=BosIndexBul(); if(idx<0) return;
+   posTicket[idx]=ticket; posZirve[idx]=0; posBaraj[idx]=false;
+}
+
+void PosSil(ulong ticket)
+{
+   int idx=PosIndexBul(ticket); if(idx<0) return;
+   posTicket[idx]=0; posZirve[idx]=0; posBaraj[idx]=false;
+}
+
+//+------------------------------------------------------------------+
+//| Magic ile pozisyon say                                            |
+//+------------------------------------------------------------------+
+int PozSay()
+{
+   int n=0;
+   for(int i=PositionsTotal()-1;i>=0;i--)
+   {
+      ulong t=PositionGetTicket(i);
+      if(PositionSelectByTicket(t))
+         if(PositionGetString(POSITION_SYMBOL)==InpSymbol && PositionGetInteger(POSITION_MAGIC)==InpMagic)
+            n++;
+   }
+   return n;
+}
+
+//+------------------------------------------------------------------+
+//| İşlem Aç                                                          |
+//+------------------------------------------------------------------+
+void IslemAc(ENUM_ORDER_TYPE tip)
+{
+   MqlTradeRequest req={}; MqlTradeResult res={};
+   req.action=TRADE_ACTION_DEAL; req.symbol=InpSymbol; req.volume=InpLot;
+   req.type=tip;
+   req.price=(tip==ORDER_TYPE_BUY)?SymbolInfoDouble(InpSymbol,SYMBOL_ASK):SymbolInfoDouble(InpSymbol,SYMBOL_BID);
+   req.magic=InpMagic; req.type_filling=ORDER_FILLING_IOC; req.deviation=50;
+
+   if(!OrderSend(req,res)){ Print("❌ OrderSend: ",GetLastError()); return; }
+   if(res.retcode==TRADE_RETCODE_DONE)
+   {
+      Print("✅ ",(tip==ORDER_TYPE_BUY?"BUY":"SELL")," @ ",res.price);
+      PosEkle(res.order);
+   }
+   else Print("❌ ",res.comment);
+}
+
+//+------------------------------------------------------------------+
+//| İşlem Kapat                                                       |
+//+------------------------------------------------------------------+
+void IslemKapat(ulong ticket)
+{
+   if(!PositionSelectByTicket(ticket)) return;
+   double kar=PositionGetDouble(POSITION_PROFIT);
+
+   MqlTradeRequest req={}; MqlTradeResult res={};
+   req.action=TRADE_ACTION_DEAL; req.position=ticket;
+   req.symbol=InpSymbol; req.volume=PositionGetDouble(POSITION_VOLUME);
+   req.type=(PositionGetInteger(POSITION_TYPE)==POSITION_TYPE_BUY)?ORDER_TYPE_SELL:ORDER_TYPE_BUY;
+   req.price=(req.type==ORDER_TYPE_BUY)?SymbolInfoDouble(InpSymbol,SYMBOL_ASK):SymbolInfoDouble(InpSymbol,SYMBOL_BID);
+   req.type_filling=ORDER_FILLING_IOC; req.deviation=50;
+
+   if(!OrderSend(req,res)){ Print("❌ Kapatma: ",GetLastError()); return; }
+   if(res.retcode==TRADE_RETCODE_DONE)
+   {
+      Print("🔒 KAPATILDI | Kâr:$",kar);
+      PosSil(ticket);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Trailing Yönet (HER TICK)                                         |
+//+------------------------------------------------------------------+
+void TrailingYonet()
+{
+   for(int i=PositionsTotal()-1;i>=0;i--)
+   {
+      ulong t=PositionGetTicket(i);
+      if(!PositionSelectByTicket(t)) continue;
+      if(PositionGetString(POSITION_SYMBOL)!=InpSymbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC)!=InpMagic) continue;
+
+      double kar = PositionGetDouble(POSITION_PROFIT);
+      int idx = PosIndexBul(t);
+      if(idx<0){ PosEkle(t); idx=PosIndexBul(t); if(idx<0) continue; }
+
+      // ZARARDA → DOKUNMA
+      if(kar <= 0)
+      {
+         if(posZirve[idx]>0 && !posBaraj[idx])
+         {
+            posBaraj[idx]=true;
+            Print("⚠️ Kâr sıfırlandı! Baraj KALKTI. Ticket:",t);
+         }
+         if(posZirve[idx]>0) posZirve[idx]=0;
+         continue;
+      }
+
+      // KÂRDA → ZİRVE GÜNCELLE
+      if(kar > posZirve[idx]) posZirve[idx]=kar;
+
+      // TAKİP BAŞLATMA
+      bool takip=false;
+      if(InpTrailStart==0) takip=true;
+      else if(posBaraj[idx] && kar>0) takip=true;
+      else if(posZirve[idx]>=InpTrailStart) takip=true;
+
+      // STOP KONTROLÜ
+      if(takip)
+      {
+         double fark=posZirve[idx]-kar;
+         if(fark>=InpTrailStop)
+         {
+            Print("⛔ STOP! Zirve:$",posZirve[idx]," An:$",kar," Fark:$",fark);
+            IslemKapat(t);
+         }
+      }
+   }
+
+   // Temizlik
+   if(PozSay()==0)
+   {
+      ArrayInitialize(posTicket,0); ArrayInitialize(posZirve,0); ArrayInitialize(posBaraj,false);
+   }
+   else
+   {
+      for(int i=0;i<MAX_POS;i++)
+      {
+         if(posTicket[i]==0) continue;
+         if(!PositionSelectByTicket(posTicket[i])) PosSil(posTicket[i]);
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Son fraktalı bul (EA başlangıcından sonra oluşan)                |
+//| Dönüş: 1=Üst Fraktal(yukarı), -1=Alt Fraktal(aşağı), 0=yok     |
+//+------------------------------------------------------------------+
+int SonFraktalYonu()
+{
+   // Son 30 barı tara (fraktal genelde 2-3 bar geriden gelir)
+   double upper[],lower[];
+   datetime timeBuf[];
+   
+   ArraySetAsSeries(upper,true);
+   ArraySetAsSeries(lower,true);
+   ArraySetAsSeries(timeBuf,true);
+   
+   if(CopyBuffer(hFractals,0,0,30,upper)<30) return 0;  // Buffer 0 = Üst fraktal
+   if(CopyBuffer(hFractals,1,0,30,lower)<30) return 0;  // Buffer 1 = Alt fraktal
+   
+   // Zaman buffer'ı (bar zamanları)
+   if(CopyTime(InpSymbol,InpTF,0,30,timeBuf)<30) return 0;
+   
+   // En yeni fraktalı bul (EA başlangıcından sonra oluşan)
+   datetime enYeniZaman=0;
+   int enYeniYon=0;  // 1=üst, -1=alt
+   
+   for(int i=0;i<30;i++)
+   {
+      // Sadece EA başladıktan SONRA oluşan barlara bak
+      if(timeBuf[i] < eaBaslangicZamani) continue;
+      
+      // Daha önce işlenmiş fraktalı atla
+      if(timeBuf[i] <= sonFraktalZamani) continue;
+      
+      // Üst fraktal var mı?
+      if(upper[i]!=EMPTY_VALUE && upper[i]>0)
+      {
+         if(timeBuf[i] > enYeniZaman)
+         {
+            enYeniZaman = timeBuf[i];
+            enYeniYon = 1;
+         }
+      }
+      
+      // Alt fraktal var mı?
+      if(lower[i]!=EMPTY_VALUE && lower[i]>0)
+      {
+         if(timeBuf[i] > enYeniZaman)
+         {
+            enYeniZaman = timeBuf[i];
+            enYeniYon = -1;
+         }
+      }
+   }
+   
+   if(enYeniYon!=0)
+      sonFraktalZamani = enYeniZaman;  // Bu fraktalı işledik
+   
+   return enYeniYon;
+}
+
+//+------------------------------------------------------------------+
+//| OnTick                                                            |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // HER TICK TRAILING
+   TrailingYonet();
+
+   // Açık işlem varsa yeni sinyal arama
+   if(PozSay() >= InpMaxIslem) return;
+
+   // En son fraktalı bul
+   int fraktalYon = SonFraktalYonu();
+   if(fraktalYon == 0) return;  // Yeni fraktal yok
+
+   // ═══════════════════════════════════════
+   // FRAKTAL BULUNDU! TERSİ YÖNDE İŞLEM AÇ
+   // ═══════════════════════════════════════
+   ENUM_ORDER_TYPE tip;
+   
+   if(fraktalYon == 1)
+   {
+      // Üst fraktal (yukarı ok) → TERSİ = SELL
+      tip = ORDER_TYPE_SELL;
+      Print(">>> ÜST FRAKTAL (yukarı) → TERSİ: SELL SİNYALİ");
+   }
+   else
+   {
+      // Alt fraktal (aşağı ok) → TERSİ = BUY
+      tip = ORDER_TYPE_BUY;
+      Print(">>> ALT FRAKTAL (aşağı) → TERSİ: BUY SİNYALİ");
+   }
+   
+   Print("   Fraktal zamanı: ",TimeToString(sonFraktalZamani));
+   Print("   Fiyat: ",SymbolInfoDouble(InpSymbol,SYMBOL_BID));
+
+   IslemAc(tip);
+}
+//+------------------------------------------------------------------+
