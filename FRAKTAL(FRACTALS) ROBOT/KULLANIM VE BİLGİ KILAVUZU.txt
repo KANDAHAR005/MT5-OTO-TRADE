@@ -11,3 +11,5 @@ AVANTAJ= kar a  gecen işlem terse dönse bile kesinlikle işlem zarar etmez.
 LOT AYARLAMA         ----> LOT MİKTARINIZI DİLEDİĞİNİZ GİBİ AYARLAMA İMKANI VAR.
 MAKS İŞLEM SAYISI    ----> HER SİNYALDE MAK İŞLEM MIKTARIN AYARLAYABİLİRSİNİZ.
 -------UYARI ZARAR DURDUR YOK BİLEREK KOYMADIM   DİKKATLİ OLUN----------
+-------UYARI   TAKİP EDEN DURDURUCU DÜŞÜK MIKTAR AYARLARSANIZ(0.01,0.03 VS GİBİ)  hızlı hareketli grafikte slippage fiyat klayması 
+durumundan dolayı işlem zararla kapanabilir. robot emri uygun seviyede gonderse bile hareketlilikten dolayı emir geç kalıcaktır--------
