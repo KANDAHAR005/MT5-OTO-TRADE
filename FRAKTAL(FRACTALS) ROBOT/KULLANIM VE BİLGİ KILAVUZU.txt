@@ -1,2 +1,13 @@
 BU OTO ROBOT FRAKTAL PRENSİBİ İLE ÇALIŞIR 
-EN SON OLUŞAN FRAKTAL  OK un  TERSİ YÖNDE İŞLEM AÇAR
+EN SON OLUŞAN FRAKTAL  OK LARINA GÖRE İŞLEM AÇAR
+ÖZELLİKLER:
+-PARİTE AYARLAMA       ---> işlem yaptığınız pariteniyi ayarlama 
+AVANATAJ==her paritede çalışabilme
+-kar takip eşiği       ---> belirlediğiniz  miktardan sonra ki kar miktarını takip eder ve kar arttığı sürece işlem açık kalır.
+eğer bu değeri 0(sıfır) yaparsanız işlem kar a geçtiği anda takip edilir(TAVSİYE EDİLEN)
+AVANTAJ= kar limiti belırleyıp kar a  gecen işlem terse dönse bile kesinlikle işlem zarar etmez.
+-takip eden durdurucu  ---> kar a gecen işlem belirlediğiniz miktarda  düşerse işle mi kapatır.
+AVANTAJ= kar a  gecen işlem terse dönse bile kesinlikle işlem zarar etmez.
+LOT AYARLAMA         ----> LOT MİKTARINIZI DİLEDİĞİNİZ GİBİ AYARLAMA İMKANI VAR.
+MAKS İŞLEM SAYISI    ----> HER SİNYALDE MAK İŞLEM MIKTARIN AYARLAYABİLİRSİNİZ.
+-------UYARI ZARAR DURDUR YOK BİLEREK KOYMADIM   DİKKATLİ OLUN----------
